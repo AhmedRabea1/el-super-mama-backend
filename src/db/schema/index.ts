@@ -9,6 +9,8 @@ export * from "./programs";
 export * from "./phases";
 export * from "./dailyTargets";
 export * from "./foodTips";
+export * from "./plans";
+export * from "./planMeals";
 export * from "./weeks";
 export * from "./workoutDays";
 export * from "./exercises";
