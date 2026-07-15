@@ -8,6 +8,7 @@ export * from "./dailyWellnessLogs";
 export * from "./programs";
 export * from "./phases";
 export * from "./dailyTargets";
+export * from "./foodTips";
 export * from "./weeks";
 export * from "./workoutDays";
 export * from "./exercises";
