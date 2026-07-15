@@ -7,6 +7,7 @@ export * from "./cycleLogs";
 export * from "./dailyWellnessLogs";
 export * from "./programs";
 export * from "./phases";
+export * from "./dailyTargets";
 export * from "./weeks";
 export * from "./workoutDays";
 export * from "./exercises";
