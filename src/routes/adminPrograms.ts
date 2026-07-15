@@ -6,11 +6,50 @@ import {
   weeksTable,
   workoutDaysTable,
   exercisesTable,
+  phasePlansTable,
+  plansTable,
+  planMealsTable,
+  recipesTable,
 } from "../db";
 import { eq, asc, desc } from "drizzle-orm";
 import { requireAdmin } from "../middlewares/auth.js";
 
 const router = Router();
+
+async function getPlansForPhase(phaseId: number) {
+  const rows = await db
+    .select({
+      id: plansTable.id,
+      name: plansTable.name,
+      createdAt: plansTable.createdAt,
+      updatedAt: plansTable.updatedAt,
+    })
+    .from(phasePlansTable)
+    .innerJoin(plansTable, eq(phasePlansTable.planId, plansTable.id))
+    .where(eq(phasePlansTable.phaseId, phaseId))
+    .orderBy(asc(plansTable.name));
+
+  return Promise.all(
+    rows.map(async (plan) => ({
+      ...plan,
+      meals: await db
+        .select({
+          id: planMealsTable.id,
+          mealType: planMealsTable.mealType,
+          recipeId: planMealsTable.recipeId,
+          recipe: recipesTable,
+        })
+        .from(planMealsTable)
+        .leftJoin(recipesTable, eq(planMealsTable.recipeId, recipesTable.id))
+        .where(eq(planMealsTable.planId, plan.id))
+        .orderBy(asc(planMealsTable.id)),
+    })),
+  );
+}
+
+function cleanPlanIds(planIds: number[] | undefined): number[] {
+  return Array.from(new Set((planIds ?? []).filter((id) => Number.isFinite(Number(id))).map(Number)));
+}
 
 // ── Programs ────────────────────────────────────────────────────────────────
 
@@ -133,17 +172,30 @@ router.get("/admin/programs/:programId/phases", requireAdmin, async (req, res) =
 router.post("/admin/programs/:programId/phases", requireAdmin, async (req, res) => {
   try {
     const programId = Number(req.params.programId);
-    const { name, description, orderIndex } = req.body as {
+    const { name, description, orderIndex, planIds } = req.body as {
       name: string;
       description?: string;
       orderIndex?: number;
+      planIds?: number[];
     };
-    const [phase] = await db
-      .insert(phasesTable)
-      .values({ programId, name, description, orderIndex: orderIndex ?? 0 })
-      .returning();
-    res.status(201).json(phase);
-  } catch (err) {
+    const ids = cleanPlanIds(planIds);
+    const phase = await db.transaction(async (tx) => {
+      const [created] = await tx
+        .insert(phasesTable)
+        .values({ programId, name, description, orderIndex: orderIndex ?? 0 })
+        .returning();
+      if (ids.length > 0) {
+        await tx.insert(phasePlansTable).values(ids.map((planId) => ({ phaseId: created.id, planId })));
+      }
+      return created;
+    });
+    res.status(201).json({ ...phase, plans: await getPlansForPhase(phase.id) });
+  } catch (err: any) {
+    const pgCode = err?.code ?? err?.cause?.code;
+    if (pgCode === "23503") {
+      res.status(400).json({ error: "One or more planId values do not exist" });
+      return;
+    }
     console.error(err);
     res.status(500).json({ error: "Internal server error" });
   }
@@ -166,7 +218,8 @@ router.get("/admin/phases/:phaseId", requireAdmin, async (req, res) => {
       .from(weeksTable)
       .where(eq(weeksTable.phaseId, phaseId))
       .orderBy(asc(weeksTable.weekNumber));
-    res.json({ ...phase, weeks });
+    const plans = await getPlansForPhase(phaseId);
+    res.json({ ...phase, weeks, plans });
   } catch (err) {
     console.error(err);
     res.status(500).json({ error: "Internal server error" });
@@ -176,22 +229,39 @@ router.get("/admin/phases/:phaseId", requireAdmin, async (req, res) => {
 router.put("/admin/phases/:phaseId", requireAdmin, async (req, res) => {
   try {
     const phaseId = Number(req.params.phaseId);
-    const { name, description, orderIndex } = req.body as {
+    const { name, description, orderIndex, planIds } = req.body as {
       name?: string;
       description?: string;
       orderIndex?: number;
+      planIds?: number[];
     };
-    const [updated] = await db
-      .update(phasesTable)
-      .set({ name, description, orderIndex, updatedAt: new Date() })
-      .where(eq(phasesTable.id, phaseId))
-      .returning();
+    const updated = await db.transaction(async (tx) => {
+      const [phase] = await tx
+        .update(phasesTable)
+        .set({ name, description, orderIndex, updatedAt: new Date() })
+        .where(eq(phasesTable.id, phaseId))
+        .returning();
+      if (!phase) return null;
+      if (planIds !== undefined) {
+        const ids = cleanPlanIds(planIds);
+        await tx.delete(phasePlansTable).where(eq(phasePlansTable.phaseId, phaseId));
+        if (ids.length > 0) {
+          await tx.insert(phasePlansTable).values(ids.map((planId) => ({ phaseId, planId })));
+        }
+      }
+      return phase;
+    });
     if (!updated) {
       res.status(404).json({ error: "Phase not found" });
       return;
     }
-    res.json(updated);
-  } catch (err) {
+    res.json({ ...updated, plans: await getPlansForPhase(phaseId) });
+  } catch (err: any) {
+    const pgCode = err?.code ?? err?.cause?.code;
+    if (pgCode === "23503") {
+      res.status(400).json({ error: "One or more planId values do not exist" });
+      return;
+    }
     console.error(err);
     res.status(500).json({ error: "Internal server error" });
   }
