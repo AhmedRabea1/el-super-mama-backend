@@ -10,3 +10,4 @@ export * from "./phases";
 export * from "./weeks";
 export * from "./workoutDays";
 export * from "./exercises";
+export * from "./recipes";
