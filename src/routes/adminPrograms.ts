@@ -68,16 +68,18 @@ router.get("/admin/programs", requireAdmin, async (_req, res) => {
 
 router.post("/admin/programs", requireAdmin, async (req, res) => {
   try {
-    const { slug, name, description, category, isHidden } = req.body as {
+    const { slug, name, description, category, isHidden, priceInEgp, priceInUsd } = req.body as {
       slug: string;
       name: string;
       description?: string;
       category?: string;
       isHidden?: boolean;
+      priceInEgp?: number;
+      priceInUsd?: number;
     };
     const [program] = await db
       .insert(programsTable)
-      .values({ slug, name, description, category, isHidden: isHidden ?? false })
+      .values({ slug, name, description, category, isHidden: isHidden ?? false, priceInEgp, priceInUsd })
       .returning();
     res.status(201).json(program);
   } catch (err: any) {
@@ -118,16 +120,18 @@ router.get("/admin/programs/:programId", requireAdmin, async (req, res) => {
 router.put("/admin/programs/:programId", requireAdmin, async (req, res) => {
   try {
     const programId = Number(req.params.programId);
-    const { slug, name, description, category, isHidden } = req.body as {
+    const { slug, name, description, category, isHidden, priceInEgp, priceInUsd } = req.body as {
       slug?: string;
       name?: string;
       description?: string;
       category?: string;
       isHidden?: boolean;
+      priceInEgp?: number;
+      priceInUsd?: number;
     };
     const [updated] = await db
       .update(programsTable)
-      .set({ slug, name, description, category, isHidden, updatedAt: new Date() })
+      .set({ slug, name, description, category, isHidden, priceInEgp, priceInUsd, updatedAt: new Date() })
       .where(eq(programsTable.id, programId))
       .returning();
     if (!updated) {

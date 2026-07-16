@@ -1,4 +1,4 @@
-import { pgTable, serial, text, boolean, timestamp } from "drizzle-orm/pg-core";
+import { pgTable, serial, text, boolean, numeric, timestamp } from "drizzle-orm/pg-core";
 import { createInsertSchema } from "drizzle-zod";
 import { z } from "zod/v4";
 
@@ -9,6 +9,8 @@ export const programsTable = pgTable("programs", {
   description: text("description"),
   category: text("category"),
   isHidden: boolean("is_hidden").notNull().default(false),
+  priceInEgp: numeric("price_in_egp", { precision: 10, scale: 2, mode: "number" }),
+  priceInUsd: numeric("price_in_usd", { precision: 10, scale: 2, mode: "number" }),
   createdAt: timestamp("created_at").notNull().defaultNow(),
   updatedAt: timestamp("updated_at").notNull().defaultNow(),
 });
