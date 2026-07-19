@@ -16,6 +16,7 @@ import webhooksRouter from "./webhooks.js";
 import foodRouter from "./food.js";
 import wellnessRouter from "./wellness.js";
 import pregnancyJourneyRouter from "./pregnancyJourney.js";
+import programsRouter from "./programs.js";
 
 const router: IRouter = Router();
 
@@ -36,6 +37,7 @@ router.use(webhooksRouter);
 router.use(foodRouter);
 router.use(wellnessRouter);
 router.use(pregnancyJourneyRouter);
+router.use(programsRouter);
 
 export default router;
   
