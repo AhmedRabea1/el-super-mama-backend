@@ -16,3 +16,5 @@ export * from "./weeks";
 export * from "./workoutDays";
 export * from "./exercises";
 export * from "./recipes";
+export * from "./journeys";
+export * from "./journeyPrograms";

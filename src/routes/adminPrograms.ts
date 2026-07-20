@@ -68,7 +68,7 @@ router.get("/admin/programs", requireAdmin, async (_req, res) => {
 
 router.post("/admin/programs", requireAdmin, async (req, res) => {
   try {
-    const { slug, name, description, category, isHidden, priceInEgp, priceInUsd } = req.body as {
+    const { slug, name, description, category, isHidden, priceInEgp, priceInUsd, whatsIncluded } = req.body as {
       slug: string;
       name: string;
       description?: string;
@@ -76,10 +76,11 @@ router.post("/admin/programs", requireAdmin, async (req, res) => {
       isHidden?: boolean;
       priceInEgp?: number;
       priceInUsd?: number;
+      whatsIncluded?: string[];
     };
     const [program] = await db
       .insert(programsTable)
-      .values({ slug, name, description, category, isHidden: isHidden ?? false, priceInEgp, priceInUsd })
+      .values({ slug, name, description, category, isHidden: isHidden ?? false, priceInEgp, priceInUsd, whatsIncluded: whatsIncluded ?? [] })
       .returning();
     res.status(201).json(program);
   } catch (err: any) {
@@ -120,7 +121,7 @@ router.get("/admin/programs/:programId", requireAdmin, async (req, res) => {
 router.put("/admin/programs/:programId", requireAdmin, async (req, res) => {
   try {
     const programId = Number(req.params.programId);
-    const { slug, name, description, category, isHidden, priceInEgp, priceInUsd } = req.body as {
+    const { slug, name, description, category, isHidden, priceInEgp, priceInUsd, whatsIncluded } = req.body as {
       slug?: string;
       name?: string;
       description?: string;
@@ -128,10 +129,11 @@ router.put("/admin/programs/:programId", requireAdmin, async (req, res) => {
       isHidden?: boolean;
       priceInEgp?: number;
       priceInUsd?: number;
+      whatsIncluded?: string[];
     };
     const [updated] = await db
       .update(programsTable)
-      .set({ slug, name, description, category, isHidden, priceInEgp, priceInUsd, updatedAt: new Date() })
+      .set({ slug, name, description, category, isHidden, priceInEgp, priceInUsd, whatsIncluded, updatedAt: new Date() })
       .where(eq(programsTable.id, programId))
       .returning();
     if (!updated) {
