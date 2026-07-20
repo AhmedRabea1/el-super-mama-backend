@@ -14,8 +14,28 @@ import {
   foodTipsTable,
 } from "../db";
 import { eq, asc } from "drizzle-orm";
+import type { Exercise } from "../db";
 
 const router = Router();
+
+// "training" days (labeled "Strength" in the admin portal) carry three
+// exercise sections — warm-up, main workout, cool-down — set via
+// exercises.section. "mobility" days use a single "mobility" section.
+// "walking"/"rest" days have no exercises at all. Group them here so every
+// consumer (mobile, admin, etc.) doesn't have to re-derive this split.
+function groupExercisesByDayType(dayType: string, exercises: Exercise[]) {
+  if (dayType === "training") {
+    return {
+      warmup: exercises.filter((e) => e.section === "warmup"),
+      mainWorkout: exercises.filter((e) => e.section === "main"),
+      coolDown: exercises.filter((e) => e.section === "cooldown"),
+    };
+  }
+  if (dayType === "mobility") {
+    return { movements: exercises.filter((e) => e.section === "mobility") };
+  }
+  return {};
+}
 
 async function getPlansForPhase(phaseId: number) {
   const rows = await db
@@ -67,7 +87,7 @@ async function getPhaseContent(phaseId: number) {
             .from(exercisesTable)
             .where(eq(exercisesTable.workoutDayId, day.id))
             .orderBy(asc(exercisesTable.orderIndex));
-          return { ...day, exercises };
+          return { ...day, exercises, ...groupExercisesByDayType(day.dayType, exercises) };
         }),
       );
 
