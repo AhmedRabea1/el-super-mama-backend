@@ -8,6 +8,7 @@ export const programsTable = pgTable("programs", {
   name: text("name").notNull(),
   description: text("description"),
   category: text("category"),
+  subCategory: text("sub_category"),
   isHidden: boolean("is_hidden").notNull().default(false),
   priceInEgp: numeric("price_in_egp", { precision: 10, scale: 2, mode: "number" }),
   priceInUsd: numeric("price_in_usd", { precision: 10, scale: 2, mode: "number" }),

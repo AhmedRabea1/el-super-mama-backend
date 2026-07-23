@@ -68,11 +68,12 @@ router.get("/admin/programs", requireAdmin, async (_req, res) => {
 
 router.post("/admin/programs", requireAdmin, async (req, res) => {
   try {
-    const { slug, name, description, category, isHidden, priceInEgp, priceInUsd, whatsIncluded } = req.body as {
+    const { slug, name, description, category, subCategory, isHidden, priceInEgp, priceInUsd, whatsIncluded } = req.body as {
       slug: string;
       name: string;
       description?: string;
       category?: string;
+      subCategory?: string;
       isHidden?: boolean;
       priceInEgp?: number;
       priceInUsd?: number;
@@ -80,7 +81,7 @@ router.post("/admin/programs", requireAdmin, async (req, res) => {
     };
     const [program] = await db
       .insert(programsTable)
-      .values({ slug, name, description, category, isHidden: isHidden ?? false, priceInEgp, priceInUsd, whatsIncluded: whatsIncluded ?? [] })
+      .values({ slug, name, description, category, subCategory, isHidden: isHidden ?? false, priceInEgp, priceInUsd, whatsIncluded: whatsIncluded ?? [] })
       .returning();
     res.status(201).json(program);
   } catch (err: any) {
@@ -121,11 +122,12 @@ router.get("/admin/programs/:programId", requireAdmin, async (req, res) => {
 router.put("/admin/programs/:programId", requireAdmin, async (req, res) => {
   try {
     const programId = Number(req.params.programId);
-    const { slug, name, description, category, isHidden, priceInEgp, priceInUsd, whatsIncluded } = req.body as {
+    const { slug, name, description, category, subCategory, isHidden, priceInEgp, priceInUsd, whatsIncluded } = req.body as {
       slug?: string;
       name?: string;
       description?: string;
       category?: string;
+      subCategory?: string;
       isHidden?: boolean;
       priceInEgp?: number;
       priceInUsd?: number;
@@ -133,7 +135,7 @@ router.put("/admin/programs/:programId", requireAdmin, async (req, res) => {
     };
     const [updated] = await db
       .update(programsTable)
-      .set({ slug, name, description, category, isHidden, priceInEgp, priceInUsd, whatsIncluded, updatedAt: new Date() })
+      .set({ slug, name, description, category, subCategory, isHidden, priceInEgp, priceInUsd, whatsIncluded, updatedAt: new Date() })
       .where(eq(programsTable.id, programId))
       .returning();
     if (!updated) {

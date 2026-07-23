@@ -118,16 +118,19 @@ async function getPhaseContent(phaseId: number) {
 }
 
 // GET /programs — public catalog listing (hidden programs excluded)
-// Optional ?category=prenatal|postpartum|nutrition filter.
+// Optional ?category=prenatal|postpartum|nutrition and/or ?subCategory=... filters.
 router.get("/programs", async (req, res) => {
   try {
     const category = typeof req.query.category === "string" ? req.query.category : undefined;
+    const subCategory = typeof req.query.subCategory === "string" ? req.query.subCategory : undefined;
     const rows = await db
       .select()
       .from(programsTable)
       .where(eq(programsTable.isHidden, false))
       .orderBy(asc(programsTable.createdAt));
-    const programs = category ? rows.filter((p) => p.category === category) : rows;
+    const programs = rows
+      .filter((p) => !category || p.category === category)
+      .filter((p) => !subCategory || p.subCategory === subCategory);
     res.json({ programs });
   } catch (err) {
     console.error("[GET /programs]", err);
