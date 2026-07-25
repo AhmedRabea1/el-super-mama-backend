@@ -1,6 +1,7 @@
-import { pgTable, serial, text, timestamp, boolean } from "drizzle-orm/pg-core";
+import { pgTable, serial, text, integer, timestamp, boolean } from "drizzle-orm/pg-core";
 import { createInsertSchema } from "drizzle-zod";
 import { z } from "zod/v4";
+import { programsTable } from "./programs";
 
 export const appUsersTable = pgTable("app_users", {
   id: serial("id").primaryKey(),
@@ -9,7 +10,8 @@ export const appUsersTable = pgTable("app_users", {
   name: text("name").notNull(),
   phone: text("phone"),
   stage: text("stage"),
-  programId: text("program_id"),
+  programId: integer("program_id").references(() => programsTable.id, { onDelete: "set null" }),
+  currentDay: integer("current_day").notNull().default(1),
   isActive: boolean("is_active").notNull().default(true),
   subscriptionStatus: text("subscription_status"),
   notes: text("notes"),

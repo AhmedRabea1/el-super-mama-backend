@@ -12,7 +12,7 @@ function signUserToken(payload: { userId: number; email: string }): string {
   return jwt.sign(payload, JWT_SECRET, { expiresIn: "30d" });
 }
 
-function formatUser(u: typeof appUsersTable.$inferSelect) {
+export function formatUser(u: typeof appUsersTable.$inferSelect) {
   return {
     id: u.id,
     email: u.email,
@@ -20,6 +20,7 @@ function formatUser(u: typeof appUsersTable.$inferSelect) {
     phone: u.phone,
     stage: u.stage,
     programId: u.programId,
+    currentDay: u.currentDay,
     isActive: u.isActive,
     subscriptionStatus: u.subscriptionStatus,
     createdAt: u.createdAt,

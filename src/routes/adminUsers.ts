@@ -44,6 +44,7 @@ router.get("/admin/users", requireAdmin, async (req, res) => {
         phone: u.phone,
         stage: u.stage,
         programId: u.programId,
+        currentDay: u.currentDay,
         isActive: u.isActive,
         subscriptionStatus: u.subscriptionStatus,
         createdAt: u.createdAt,
@@ -83,6 +84,7 @@ router.get("/admin/users/:userId", requireAdmin, async (req, res) => {
       phone: user.phone,
       stage: user.stage,
       programId: user.programId,
+      currentDay: user.currentDay,
       isActive: user.isActive,
       subscriptionStatus: user.subscriptionStatus,
       createdAt: user.createdAt,
@@ -122,7 +124,7 @@ router.put("/admin/users/:userId", requireAdmin, async (req, res) => {
   try {
     const userId = Number(req.params.userId);
     const { name, phone, isActive, notes, stage, programId } = req.body as {
-      name?: string; phone?: string; isActive?: boolean; notes?: string; stage?: string; programId?: string;
+      name?: string; phone?: string; isActive?: boolean; notes?: string; stage?: string; programId?: number;
     };
     const [updated] = await db
       .update(appUsersTable)
@@ -133,7 +135,7 @@ router.put("/admin/users/:userId", requireAdmin, async (req, res) => {
       res.status(404).json({ error: "User not found" });
       return;
     }
-    res.json({ id: updated.id, email: updated.email, name: updated.name, phone: updated.phone, stage: updated.stage, programId: updated.programId, isActive: updated.isActive, subscriptionStatus: updated.subscriptionStatus, createdAt: updated.createdAt, lastLoginAt: updated.lastLoginAt, notes: updated.notes });
+    res.json({ id: updated.id, email: updated.email, name: updated.name, phone: updated.phone, stage: updated.stage, programId: updated.programId, currentDay: updated.currentDay, isActive: updated.isActive, subscriptionStatus: updated.subscriptionStatus, createdAt: updated.createdAt, lastLoginAt: updated.lastLoginAt, notes: updated.notes });
   } catch (err) {
     console.error(err);
     res.status(500).json({ error: "Internal server error" });
