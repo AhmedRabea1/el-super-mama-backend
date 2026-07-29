@@ -1,13 +1,13 @@
 import { Router } from "express";
 import { db } from "../db";
-import { appUsersTable, assessmentsTable } from "../db";
+import { appUsersTable, assessmentsTable, programsTable, subscriptionsTable } from "../db";
 import { eq } from "drizzle-orm";
 import { requireUser } from "../middlewares/auth.js";
 import { formatUser } from "./appAuth.js";
 
 const router = Router();
 
-function formatAssessment(a: typeof assessmentsTable.$inferSelect | undefined) {
+export function formatAssessment(a: typeof assessmentsTable.$inferSelect | undefined) {
   if (!a) {
     return {
       status: null,
@@ -142,6 +142,12 @@ router.patch("/users/me/enrollment", requireUser, async (req, res) => {
       return;
     }
 
+    const [program] = await db.select().from(programsTable).where(eq(programsTable.id, programId)).limit(1);
+    if (!program) {
+      res.status(400).json({ error: "Program not found" });
+      return;
+    }
+
     const [updated] = await db
       .update(appUsersTable)
       .set({ programId, currentDay: 1, updatedAt: new Date() })
@@ -152,13 +158,18 @@ router.patch("/users/me/enrollment", requireUser, async (req, res) => {
       return;
     }
 
+    // Record the enrollment as a subscription row so it shows up alongside
+    // RevenueCat-driven billing subscriptions (see routes/webhooks.ts).
+    await db.insert(subscriptionsTable).values({
+      userId,
+      productId: program.slug,
+      status: "active",
+      startsAt: new Date(),
+      store: "internal",
+    });
+
     res.json(formatUser(updated));
-  } catch (err: any) {
-    const pgCode = err?.code ?? err?.cause?.code;
-    if (pgCode === "23503") {
-      res.status(400).json({ error: "Program not found" });
-      return;
-    }
+  } catch (err) {
     console.error("[PATCH /users/me/enrollment]", err);
     res.status(500).json({ error: "Internal server error" });
   }

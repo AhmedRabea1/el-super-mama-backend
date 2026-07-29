@@ -1,8 +1,9 @@
 import { Router } from "express";
 import { db } from "../db";
-import { appUsersTable, subscriptionsTable, transactionsTable } from "../db";
+import { appUsersTable, assessmentsTable, programsTable, subscriptionsTable, transactionsTable } from "../db";
 import { eq, ilike, or, sql, desc } from "drizzle-orm";
 import { requireAdmin } from "../middlewares/auth.js";
+import { formatAssessment } from "./users.js";
 
 const router = Router();
 
@@ -72,10 +73,15 @@ router.get("/admin/users/:userId", requireAdmin, async (req, res) => {
       return;
     }
 
-    const [subs, txs] = await Promise.all([
+    const [subs, txs, [assessment], programRow] = await Promise.all([
       db.select().from(subscriptionsTable).where(eq(subscriptionsTable.userId, userId)).orderBy(desc(subscriptionsTable.createdAt)),
       db.select().from(transactionsTable).where(eq(transactionsTable.userId, userId)).orderBy(desc(transactionsTable.createdAt)).limit(50),
+      db.select().from(assessmentsTable).where(eq(assessmentsTable.userId, userId)).limit(1),
+      user.programId
+        ? db.select({ name: programsTable.name }).from(programsTable).where(eq(programsTable.id, user.programId)).limit(1)
+        : Promise.resolve([]),
     ]);
+    const programName = programRow[0]?.name ?? null;
 
     res.json({
       id: user.id,
@@ -84,12 +90,14 @@ router.get("/admin/users/:userId", requireAdmin, async (req, res) => {
       phone: user.phone,
       stage: user.stage,
       programId: user.programId,
+      programName,
       currentDay: user.currentDay,
       isActive: user.isActive,
       subscriptionStatus: user.subscriptionStatus,
       createdAt: user.createdAt,
       lastLoginAt: user.lastLoginAt,
       notes: user.notes,
+      ...formatAssessment(assessment),
       subscriptions: subs.map((s) => ({
         id: s.id,
         userId: s.userId,
