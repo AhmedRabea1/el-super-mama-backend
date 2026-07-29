@@ -10,6 +10,8 @@ import {
   plansTable,
   planMealsTable,
   recipesTable,
+  dailyTargetsTable,
+  foodTipsTable,
 } from "../db";
 import { eq, asc, desc } from "drizzle-orm";
 import { requireAdmin } from "../middlewares/auth.js";
@@ -49,6 +51,88 @@ async function getPlansForPhase(phaseId: number) {
 
 function cleanPlanIds(planIds: number[] | undefined): number[] {
   return Array.from(new Set((planIds ?? []).filter((id) => Number.isFinite(Number(id))).map(Number)));
+}
+
+type Tx = Parameters<Parameters<typeof db.transaction>[0]>[0];
+
+// Clones a phase (and everything under it — weeks, days, exercises, daily
+// targets, food tips, and its plan links) into `targetProgramId` at
+// `orderIndex`. Used by both the phase-duplicate and program-duplicate routes.
+async function duplicatePhaseCascade(
+  tx: Tx,
+  phaseId: number,
+  targetProgramId: number,
+  orderIndex: number,
+  renameCopy: boolean,
+) {
+  const [phase] = await tx.select().from(phasesTable).where(eq(phasesTable.id, phaseId)).limit(1);
+  if (!phase) return null;
+
+  const [newPhase] = await tx
+    .insert(phasesTable)
+    .values({
+      programId: targetProgramId,
+      name: renameCopy ? `${phase.name} (Copy)` : phase.name,
+      description: phase.description,
+      orderIndex,
+    })
+    .returning();
+
+  const weeks = await tx.select().from(weeksTable).where(eq(weeksTable.phaseId, phaseId)).orderBy(asc(weeksTable.weekNumber));
+  for (const week of weeks) {
+    const [newWeek] = await tx
+      .insert(weeksTable)
+      .values({ phaseId: newPhase.id, weekNumber: week.weekNumber, title: week.title, description: week.description })
+      .returning();
+
+    const days = await tx.select().from(workoutDaysTable).where(eq(workoutDaysTable.weekId, week.id)).orderBy(asc(workoutDaysTable.dayNumber));
+    for (const day of days) {
+      const [newDay] = await tx
+        .insert(workoutDaysTable)
+        .values({
+          weekId: newWeek.id, dayNumber: day.dayNumber, title: day.title,
+          dayType: day.dayType, instructions: day.instructions, notes: day.notes,
+          dayLabel: day.dayLabel, duration: day.duration, rpe: day.rpe,
+          equipment: day.equipment, isGym: day.isGym, workoutGoal: day.workoutGoal,
+          coachNotes: day.coachNotes, videoUrl: day.videoUrl,
+        })
+        .returning();
+
+      const exercises = await tx.select().from(exercisesTable).where(eq(exercisesTable.workoutDayId, day.id)).orderBy(asc(exercisesTable.orderIndex));
+      if (exercises.length > 0) {
+        await tx.insert(exercisesTable).values(exercises.map((ex) => ({
+          workoutDayId: newDay.id, name: ex.name, sets: ex.sets, reps: ex.reps,
+          rest: ex.rest, notes: ex.notes, videoUrl: ex.videoUrl,
+          homeVersion: ex.homeVersion, gymVersion: ex.gymVersion,
+          section: ex.section, orderIndex: ex.orderIndex,
+        })));
+      }
+    }
+  }
+
+  const [dailyTarget] = await tx.select().from(dailyTargetsTable).where(eq(dailyTargetsTable.phaseId, phaseId)).limit(1);
+  if (dailyTarget) {
+    await tx.insert(dailyTargetsTable).values({
+      phaseId: newPhase.id, dailyCalories: dailyTarget.dailyCalories, protein: dailyTarget.protein,
+      carbs: dailyTarget.carbs, fats: dailyTarget.fats, fibers: dailyTarget.fibers,
+      waterTarget: dailyTarget.waterTarget, supplements: dailyTarget.supplements,
+    });
+  }
+
+  const [foodTip] = await tx.select().from(foodTipsTable).where(eq(foodTipsTable.phaseId, phaseId)).limit(1);
+  if (foodTip) {
+    await tx.insert(foodTipsTable).values({
+      phaseId: newPhase.id, foodsToFocus: foodTip.foodsToFocus,
+      foodsToLimit: foodTip.foodsToLimit, monthlyTips: foodTip.monthlyTips,
+    });
+  }
+
+  const phasePlanRows = await tx.select().from(phasePlansTable).where(eq(phasePlansTable.phaseId, phaseId));
+  if (phasePlanRows.length > 0) {
+    await tx.insert(phasePlansTable).values(phasePlanRows.map((pp) => ({ phaseId: newPhase.id, planId: pp.planId })));
+  }
+
+  return newPhase;
 }
 
 // ── Programs ────────────────────────────────────────────────────────────────
@@ -653,6 +737,66 @@ router.post("/admin/weeks/:weekId/duplicate", requireAdmin, async (req, res) => 
       }
     }
     res.status(201).json(newWeek);
+  } catch (err) {
+    console.error(err);
+    res.status(500).json({ error: "Internal server error" });
+  }
+});
+
+// ── Duplicate Phase ───────────────────────────────────────────────────────────
+
+router.post("/admin/phases/:phaseId/duplicate", requireAdmin, async (req, res) => {
+  try {
+    const phaseId = Number(req.params.phaseId);
+    const [phase] = await db.select().from(phasesTable).where(eq(phasesTable.id, phaseId)).limit(1);
+    if (!phase) { res.status(404).json({ error: "Phase not found" }); return; }
+
+    const siblings = await db.select().from(phasesTable).where(eq(phasesTable.programId, phase.programId)).orderBy(desc(phasesTable.orderIndex));
+    const nextOrderIndex = (siblings[0]?.orderIndex ?? 0) + 1;
+
+    const newPhase = await db.transaction((tx) => duplicatePhaseCascade(tx, phaseId, phase.programId, nextOrderIndex, true));
+
+    res.status(201).json({ ...newPhase, plans: await getPlansForPhase(newPhase!.id) });
+  } catch (err) {
+    console.error(err);
+    res.status(500).json({ error: "Internal server error" });
+  }
+});
+
+// ── Duplicate Program ─────────────────────────────────────────────────────────
+
+router.post("/admin/programs/:programId/duplicate", requireAdmin, async (req, res) => {
+  try {
+    const programId = Number(req.params.programId);
+    const [program] = await db.select().from(programsTable).where(eq(programsTable.id, programId)).limit(1);
+    if (!program) { res.status(404).json({ error: "Program not found" }); return; }
+
+    const phases = await db.select().from(phasesTable).where(eq(phasesTable.programId, programId)).orderBy(asc(phasesTable.orderIndex));
+
+    const newProgram = await db.transaction(async (tx) => {
+      const [created] = await tx
+        .insert(programsTable)
+        .values({
+          slug: `${program.slug}-copy-${Date.now()}`,
+          name: `${program.name} (Copy)`,
+          description: program.description,
+          category: program.category,
+          subCategory: program.subCategory,
+          isHidden: true,
+          priceInEgp: program.priceInEgp,
+          priceInUsd: program.priceInUsd,
+          whatsIncluded: program.whatsIncluded,
+        })
+        .returning();
+
+      for (const phase of phases) {
+        await duplicatePhaseCascade(tx, phase.id, created.id, phase.orderIndex, false);
+      }
+
+      return created;
+    });
+
+    res.status(201).json(newProgram);
   } catch (err) {
     console.error(err);
     res.status(500).json({ error: "Internal server error" });
