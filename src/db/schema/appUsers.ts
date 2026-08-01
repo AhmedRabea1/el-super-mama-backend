@@ -2,6 +2,7 @@ import { pgTable, serial, text, integer, timestamp, boolean } from "drizzle-orm/
 import { createInsertSchema } from "drizzle-zod";
 import { z } from "zod/v4";
 import { programsTable } from "./programs";
+import { phasesTable } from "./phases";
 
 export const appUsersTable = pgTable("app_users", {
   id: serial("id").primaryKey(),
@@ -11,6 +12,7 @@ export const appUsersTable = pgTable("app_users", {
   phone: text("phone"),
   stage: text("stage"),
   programId: integer("program_id").references(() => programsTable.id, { onDelete: "set null" }),
+  phaseId: integer("phase_id").references(() => phasesTable.id, { onDelete: "set null" }),
   currentDay: integer("current_day").notNull().default(1),
   isActive: boolean("is_active").notNull().default(true),
   subscriptionStatus: text("subscription_status"),

@@ -20,6 +20,7 @@ export function formatUser(u: typeof appUsersTable.$inferSelect) {
     phone: u.phone,
     stage: u.stage,
     programId: u.programId,
+    phaseId: u.phaseId,
     currentDay: u.currentDay,
     isActive: u.isActive,
     subscriptionStatus: u.subscriptionStatus,

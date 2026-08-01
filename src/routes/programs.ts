@@ -170,4 +170,30 @@ router.get("/programs/:slug", async (req, res) => {
   }
 });
 
+// GET /programs/:programId/phases/:phaseId — a single phase's content, in the
+// same shape as one entry of the `phases[]` array from GET /programs/:slug.
+// Lets clients fetch just the phase a user is actually on instead of
+// downloading every phase/week/day/exercise in the whole program tree.
+router.get("/programs/:programId/phases/:phaseId", async (req, res) => {
+  try {
+    const programId = Number(req.params.programId);
+    const phaseId = Number(req.params.phaseId);
+
+    const [phase] = await db
+      .select()
+      .from(phasesTable)
+      .where(eq(phasesTable.id, phaseId))
+      .limit(1);
+    if (!phase || phase.programId !== programId) {
+      res.status(404).json({ error: "Phase not found for this program" });
+      return;
+    }
+
+    res.json({ ...phase, ...(await getPhaseContent(phase.id)) });
+  } catch (err) {
+    console.error("[GET /programs/:programId/phases/:phaseId]", err);
+    res.status(500).json({ error: "Internal server error" });
+  }
+});
+
 export default router;

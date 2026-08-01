@@ -1,6 +1,6 @@
 import { Router } from "express";
 import { db } from "../db";
-import { appUsersTable, assessmentsTable, programsTable, subscriptionsTable } from "../db";
+import { appUsersTable, assessmentsTable, phasesTable, programsTable, subscriptionsTable } from "../db";
 import { eq } from "drizzle-orm";
 import { requireUser } from "../middlewares/auth.js";
 import { formatUser } from "./appAuth.js";
@@ -131,42 +131,78 @@ router.patch("/users/me/assessment", requireUser, async (req, res) => {
   }
 });
 
-// PATCH /users/me/enrollment — enroll (or switch) the caller into a program.
-// Always resets currentDay to 1, since enrolling/re-enrolling starts a fresh run.
+// PATCH /users/me/enrollment — enroll (or switch) the caller into a program,
+// and/or assign which phase of that program they're on. Either field can be
+// sent on its own: `{ phaseId }` alone moves the user between phases of their
+// current program without resetting enrollment; `{ programId }` (with or
+// without phaseId) always resets currentDay to 1, since enrolling/re-enrolling
+// starts a fresh run. If programId changes and no phaseId is given, the old
+// phaseId is cleared since it belonged to the previous program.
 router.patch("/users/me/enrollment", requireUser, async (req, res) => {
   try {
     const userId = req.appUser!.userId;
-    const { programId } = req.body as { programId?: number };
-    if (programId === undefined) {
-      res.status(400).json({ error: "programId is required" });
+    const { programId, phaseId } = req.body as { programId?: number; phaseId?: number | null };
+    if (programId === undefined && phaseId === undefined) {
+      res.status(400).json({ error: "programId or phaseId is required" });
       return;
     }
 
-    const [program] = await db.select().from(programsTable).where(eq(programsTable.id, programId)).limit(1);
-    if (!program) {
-      res.status(400).json({ error: "Program not found" });
-      return;
-    }
-
-    const [updated] = await db
-      .update(appUsersTable)
-      .set({ programId, currentDay: 1, updatedAt: new Date() })
-      .where(eq(appUsersTable.id, userId))
-      .returning();
-    if (!updated) {
+    const [existingUser] = await db.select().from(appUsersTable).where(eq(appUsersTable.id, userId)).limit(1);
+    if (!existingUser) {
       res.status(404).json({ error: "User not found" });
       return;
     }
 
+    let program: typeof programsTable.$inferSelect | undefined;
+    const values: Record<string, unknown> = { updatedAt: new Date() };
+
+    if (programId !== undefined) {
+      [program] = await db.select().from(programsTable).where(eq(programsTable.id, programId)).limit(1);
+      if (!program) {
+        res.status(400).json({ error: "Program not found" });
+        return;
+      }
+      values.programId = programId;
+      values.currentDay = 1;
+      if (phaseId === undefined && programId !== existingUser.programId) {
+        values.phaseId = null;
+      }
+    }
+
+    if (phaseId !== undefined) {
+      if (phaseId !== null) {
+        const targetProgramId = programId ?? existingUser.programId;
+        if (!targetProgramId) {
+          res.status(400).json({ error: "User is not enrolled in a program" });
+          return;
+        }
+        const [phase] = await db.select().from(phasesTable).where(eq(phasesTable.id, phaseId)).limit(1);
+        if (!phase || phase.programId !== targetProgramId) {
+          res.status(400).json({ error: "Phase not found for this program" });
+          return;
+        }
+      }
+      values.phaseId = phaseId;
+    }
+
+    const [updated] = await db
+      .update(appUsersTable)
+      .set(values)
+      .where(eq(appUsersTable.id, userId))
+      .returning();
+
     // Record the enrollment as a subscription row so it shows up alongside
     // RevenueCat-driven billing subscriptions (see routes/webhooks.ts).
-    await db.insert(subscriptionsTable).values({
-      userId,
-      productId: program.slug,
-      status: "active",
-      startsAt: new Date(),
-      store: "internal",
-    });
+    // Only fires on an actual program enrollment/switch, not a phase-only move.
+    if (program) {
+      await db.insert(subscriptionsTable).values({
+        userId,
+        productId: program.slug,
+        status: "active",
+        startsAt: new Date(),
+        store: "internal",
+      });
+    }
 
     res.json(formatUser(updated));
   } catch (err) {
