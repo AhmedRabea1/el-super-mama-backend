@@ -1,11 +1,46 @@
-import { Router } from "express";
+import { Router, Request, Response, NextFunction } from "express";
 import { db } from "../db";
-import { appUsersTable, assessmentsTable, phasesTable, programsTable, subscriptionsTable } from "../db";
-import { eq } from "drizzle-orm";
+import { appUsersTable, assessmentsTable, calorieGoalsTable, phasesTable, programsTable, subscriptionsTable } from "../db";
+import { eq, and, sql } from "drizzle-orm";
 import { requireUser } from "../middlewares/auth.js";
 import { formatUser } from "./appAuth.js";
 
 const router = Router();
+
+// Gate for the calorie goal/log endpoints: requires an active (paid) subscription
+// and enrollment in a nutrition-category program. Fitness-program subscribers
+// keep the existing onboarding-computed assessments.targetCalories instead.
+async function requireNutritionSubscriber(req: Request, res: Response, next: NextFunction): Promise<void> {
+  try {
+    const userId = req.appUser!.userId;
+    const [user] = await db.select().from(appUsersTable).where(eq(appUsersTable.id, userId)).limit(1);
+    if (!user) {
+      res.status(404).json({ error: "User not found" });
+      return;
+    }
+    if (user.subscriptionStatus !== "active") {
+      res.status(403).json({ error: "Active subscription required" });
+      return;
+    }
+    if (!user.programId) {
+      res.status(403).json({ error: "Not enrolled in a nutrition program" });
+      return;
+    }
+    const [program] = await db.select().from(programsTable).where(eq(programsTable.id, user.programId)).limit(1);
+    if (!program || program.category?.toLowerCase() !== "nutrition") {
+      res.status(403).json({ error: "Calorie tracking is only available for nutrition-program subscribers" });
+      return;
+    }
+    next();
+  } catch (err) {
+    console.error("[requireNutritionSubscriber]", err);
+    res.status(500).json({ error: "Internal server error" });
+  }
+}
+
+function formatCalorieGoal(row: typeof calorieGoalsTable.$inferSelect) {
+  return { userId: row.userId, date: row.date, goal: row.goal, loggedCalories: row.loggedCalories };
+}
 
 export function formatAssessment(a: typeof assessmentsTable.$inferSelect | undefined) {
   if (!a) {
@@ -236,6 +271,89 @@ router.post("/users/me/enrollment/advance-day", requireUser, async (req, res) =>
     res.json(formatUser(updated));
   } catch (err) {
     console.error("[POST /users/me/enrollment/advance-day]", err);
+    res.status(500).json({ error: "Internal server error" });
+  }
+});
+
+// PATCH /users/me/calories — upsert today's (or any date's) calorie goal.
+// Never touches loggedCalories, even if the row already exists.
+router.patch("/users/me/calories", requireUser, requireNutritionSubscriber, async (req, res) => {
+  try {
+    const userId = req.appUser!.userId;
+    const { date, goal } = req.body as { date?: string; goal?: number };
+    if (!date || goal === undefined) {
+      res.status(400).json({ error: "date and goal are required" });
+      return;
+    }
+
+    const [row] = await db
+      .insert(calorieGoalsTable)
+      .values({ userId, date, goal })
+      .onConflictDoUpdate({
+        target: [calorieGoalsTable.userId, calorieGoalsTable.date],
+        set: { goal, updatedAt: new Date() },
+      })
+      .returning();
+
+    res.json(formatCalorieGoal(row));
+  } catch (err) {
+    console.error("[PATCH /users/me/calories]", err);
+    res.status(500).json({ error: "Internal server error" });
+  }
+});
+
+// POST /users/me/calories/log — atomically add `calories` to that date's
+// running total. Upserts (goal stays null until the user sets one) so a user
+// can log food before ever setting a goal.
+router.post("/users/me/calories/log", requireUser, requireNutritionSubscriber, async (req, res) => {
+  try {
+    const userId = req.appUser!.userId;
+    const { date, calories } = req.body as { date?: string; calories?: number };
+    if (!date || calories === undefined) {
+      res.status(400).json({ error: "date and calories are required" });
+      return;
+    }
+
+    const [row] = await db
+      .insert(calorieGoalsTable)
+      .values({ userId, date, loggedCalories: calories })
+      .onConflictDoUpdate({
+        target: [calorieGoalsTable.userId, calorieGoalsTable.date],
+        set: { loggedCalories: sql`${calorieGoalsTable.loggedCalories} + ${calories}`, updatedAt: new Date() },
+      })
+      .returning();
+
+    res.json(formatCalorieGoal(row));
+  } catch (err) {
+    console.error("[POST /users/me/calories/log]", err);
+    res.status(500).json({ error: "Internal server error" });
+  }
+});
+
+// GET /users/me/calories?date=2026-08-01 — the goal/logged total for one date.
+// 404s (with a null body) if nothing has been set or logged for that date yet.
+router.get("/users/me/calories", requireUser, requireNutritionSubscriber, async (req, res) => {
+  try {
+    const userId = req.appUser!.userId;
+    const date = req.query.date as string | undefined;
+    if (!date) {
+      res.status(400).json({ error: "date is required" });
+      return;
+    }
+
+    const [row] = await db
+      .select()
+      .from(calorieGoalsTable)
+      .where(and(eq(calorieGoalsTable.userId, userId), eq(calorieGoalsTable.date, date)))
+      .limit(1);
+
+    if (!row) {
+      res.status(404).json(null);
+      return;
+    }
+    res.json(formatCalorieGoal(row));
+  } catch (err) {
+    console.error("[GET /users/me/calories]", err);
     res.status(500).json({ error: "Internal server error" });
   }
 });

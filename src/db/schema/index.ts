@@ -19,3 +19,4 @@ export * from "./recipes";
 export * from "./journeys";
 export * from "./journeyPrograms";
 export * from "./assessments";
+export * from "./calorieGoals";
