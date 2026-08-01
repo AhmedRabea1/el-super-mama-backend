@@ -8,8 +8,8 @@ import { formatUser } from "./appAuth.js";
 const router = Router();
 
 // Gate for the calorie goal/log endpoints: requires an active (paid) subscription
-// and enrollment in a nutrition-category program. Fitness-program subscribers
-// keep the existing onboarding-computed assessments.targetCalories instead.
+// and enrollment in a fitness-category program. Nutrition programs don't exist
+// in the catalog yet — switch this back (or add both) once they launch.
 async function requireNutritionSubscriber(req: Request, res: Response, next: NextFunction): Promise<void> {
   try {
     const userId = req.appUser!.userId;
@@ -23,12 +23,12 @@ async function requireNutritionSubscriber(req: Request, res: Response, next: Nex
       return;
     }
     if (!user.programId) {
-      res.status(403).json({ error: "Not enrolled in a nutrition program" });
+      res.status(403).json({ error: "Not enrolled in a fitness program" });
       return;
     }
     const [program] = await db.select().from(programsTable).where(eq(programsTable.id, user.programId)).limit(1);
-    if (!program || program.category?.toLowerCase() !== "nutrition") {
-      res.status(403).json({ error: "Calorie tracking is only available for nutrition-program subscribers" });
+    if (!program || program.category?.toLowerCase() !== "fitness") {
+      res.status(403).json({ error: "Calorie tracking is only available for fitness-program subscribers" });
       return;
     }
     next();
