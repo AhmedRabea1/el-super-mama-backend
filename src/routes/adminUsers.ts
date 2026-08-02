@@ -1,6 +1,6 @@
 import { Router } from "express";
 import { db } from "../db";
-import { appUsersTable, assessmentsTable, programsTable, subscriptionsTable, transactionsTable } from "../db";
+import { appUsersTable, assessmentsTable, phasesTable, programsTable, subscriptionsTable, transactionsTable } from "../db";
 import { eq, ilike, or, sql, desc } from "drizzle-orm";
 import { requireAdmin } from "../middlewares/auth.js";
 import { formatAssessment } from "./users.js";
@@ -73,15 +73,19 @@ router.get("/admin/users/:userId", requireAdmin, async (req, res) => {
       return;
     }
 
-    const [subs, txs, [assessment], programRow] = await Promise.all([
+    const [subs, txs, [assessment], programRow, phaseRow] = await Promise.all([
       db.select().from(subscriptionsTable).where(eq(subscriptionsTable.userId, userId)).orderBy(desc(subscriptionsTable.createdAt)),
       db.select().from(transactionsTable).where(eq(transactionsTable.userId, userId)).orderBy(desc(transactionsTable.createdAt)).limit(50),
       db.select().from(assessmentsTable).where(eq(assessmentsTable.userId, userId)).limit(1),
       user.programId
         ? db.select({ name: programsTable.name }).from(programsTable).where(eq(programsTable.id, user.programId)).limit(1)
         : Promise.resolve([]),
+      user.phaseId
+        ? db.select({ name: phasesTable.name }).from(phasesTable).where(eq(phasesTable.id, user.phaseId)).limit(1)
+        : Promise.resolve([]),
     ]);
     const programName = programRow[0]?.name ?? null;
+    const phaseName = phaseRow[0]?.name ?? null;
 
     res.json({
       id: user.id,
@@ -91,6 +95,8 @@ router.get("/admin/users/:userId", requireAdmin, async (req, res) => {
       stage: user.stage,
       programId: user.programId,
       programName,
+      phaseId: user.phaseId,
+      phaseName,
       currentDay: user.currentDay,
       isActive: user.isActive,
       subscriptionStatus: user.subscriptionStatus,

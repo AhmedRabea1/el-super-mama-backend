@@ -15,6 +15,7 @@ type RecipeBody = {
   calories?: number;
   protein?: number;
   carbs?: number;
+  fats?: number;
   ingredients?: string[];
   steps?: string[];
   foodSwaps?: string[];
@@ -91,6 +92,7 @@ router.post("/admin/recipes", requireAdmin, async (req, res) => {
         calories: body.calories,
         protein: body.protein,
         carbs: body.carbs,
+        fats: body.fats,
         ingredients: body.ingredients ?? [],
         steps: body.steps ?? [],
         foodSwaps: body.foodSwaps ?? [],
@@ -124,6 +126,7 @@ router.put("/admin/recipes/:recipeId", requireAdmin, async (req, res) => {
         calories: body.calories ?? null,
         protein: body.protein ?? null,
         carbs: body.carbs ?? null,
+        fats: body.fats ?? null,
         ingredients: body.ingredients ?? [],
         steps: body.steps ?? [],
         foodSwaps: body.foodSwaps ?? [],
@@ -163,6 +166,7 @@ router.patch("/admin/recipes/:recipeId", requireAdmin, async (req, res) => {
         calories: body.calories,
         protein: body.protein,
         carbs: body.carbs,
+        fats: body.fats,
         ingredients: body.ingredients,
         steps: body.steps,
         foodSwaps: body.foodSwaps,
