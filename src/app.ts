@@ -38,7 +38,10 @@ if (LOG_LEVEL === "debug") {
 }
 
 // ── Static uploads ───────────────────────────────────────────────────────────
-app.use("/uploads", express.static(path.join(process.cwd(), "uploads")));
+// Served under /api since that's the only path prefix the reverse proxy in
+// front of this server actually forwards here — anything outside /api falls
+// through to the admin dashboard's frontend routing instead.
+app.use("/api/uploads", express.static(path.join(process.cwd(), "uploads")));
 
 // ── Routes ───────────────────────────────────────────────────────────────────
 app.use("/api", router);

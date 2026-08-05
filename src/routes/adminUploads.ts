@@ -18,7 +18,7 @@ router.post("/admin/uploads/image", requireAdmin, (req, res) => {
       res.status(400).json({ error: "image file is required" });
       return;
     }
-    const url = `${req.protocol}://${req.get("host")}/uploads/images/${req.file.filename}`;
+    const url = `${req.protocol}://${req.get("host")}/api/uploads/images/${req.file.filename}`;
     res.status(201).json({ url });
   });
 });
