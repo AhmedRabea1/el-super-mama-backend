@@ -168,6 +168,32 @@ router.patch("/admin/plans/:planId", requireAdmin, async (req, res) => {
   }
 });
 
+// POST /api/admin/plans/:planId/duplicate
+router.post("/admin/plans/:planId/duplicate", requireAdmin, async (req, res) => {
+  try {
+    const planId = Number(req.params.planId);
+    const [plan] = await db.select().from(plansTable).where(eq(plansTable.id, planId)).limit(1);
+    if (!plan) {
+      res.status(404).json({ error: "Plan not found" });
+      return;
+    }
+    const meals = await db.select().from(planMealsTable).where(eq(planMealsTable.planId, planId)).orderBy(asc(planMealsTable.id));
+
+    const newPlan = await db.transaction(async (tx) => {
+      const [created] = await tx.insert(plansTable).values({ name: `${plan.name} (Copy)` }).returning();
+      if (meals.length > 0) {
+        await tx.insert(planMealsTable).values(meals.map((m) => ({ planId: created.id, mealType: m.mealType, recipeId: m.recipeId })));
+      }
+      return created;
+    });
+
+    res.status(201).json({ ...newPlan, meals: await getMealsForPlan(newPlan.id) });
+  } catch (err) {
+    console.error(err);
+    res.status(500).json({ error: "Internal server error" });
+  }
+});
+
 // DELETE /api/admin/plans/:planId
 router.delete("/admin/plans/:planId", requireAdmin, async (req, res) => {
   try {

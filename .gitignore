@@ -21,3 +21,6 @@ npm-debug.log*
 
 # drizzle migration snapshots (generated)
 src/db/drizzle/
+
+# user-uploaded files (served from disk, not checked into git)
+uploads/

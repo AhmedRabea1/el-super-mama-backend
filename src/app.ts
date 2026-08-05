@@ -1,3 +1,4 @@
+import path from "path";
 import express, { type Express, type Request, type Response, type NextFunction } from "express";
 import cors from "cors";
 import router from "./routes";
@@ -35,6 +36,9 @@ if (LOG_LEVEL === "debug") {
     next();
   });
 }
+
+// ── Static uploads ───────────────────────────────────────────────────────────
+app.use("/uploads", express.static(path.join(process.cwd(), "uploads")));
 
 // ── Routes ───────────────────────────────────────────────────────────────────
 app.use("/api", router);
