@@ -14,6 +14,7 @@ export const appUsersTable = pgTable("app_users", {
   programId: integer("program_id").references(() => programsTable.id, { onDelete: "set null" }),
   phaseId: integer("phase_id").references(() => phasesTable.id, { onDelete: "set null" }),
   currentDay: integer("current_day").notNull().default(1),
+  aiFoodEstimateCount: integer("ai_food_estimate_count").notNull().default(0),
   isActive: boolean("is_active").notNull().default(true),
   subscriptionStatus: text("subscription_status"),
   notes: text("notes"),

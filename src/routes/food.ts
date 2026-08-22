@@ -1,14 +1,17 @@
-import { Router } from "express";
-import OpenAI from "openai";
+import { Router, Request, Response, NextFunction } from "express";
+import Anthropic from "@anthropic-ai/sdk";
+import { db } from "../db";
+import { appUsersTable } from "../db";
+import { eq, and, lt, sql } from "drizzle-orm";
+import { requireUser } from "../middlewares/auth.js";
 
 const router = Router();
 
-const openai = new OpenAI({
-  baseURL: process.env["AI_INTEGRATIONS_OPENAI_BASE_URL"],
-  apiKey: process.env["AI_INTEGRATIONS_OPENAI_API_KEY"] ?? "dummy",
-});
+// Reads ANTHROPIC_API_KEY from the environment.
+const anthropic = new Anthropic();
 
-const MODEL = "gpt-5.4";
+const MODEL = "claude-haiku-4-5-20251001";
+const TRIAL_LIMIT = 5;
 
 const FOOD_ESTIMATE_SCHEMA = {
   type: "object",
@@ -33,7 +36,28 @@ const FOOD_ESTIMATE_SCHEMA = {
   required: ["name", "assumedPortion", "calories", "protein", "carbs", "fat", "confidence", "explanation"],
 } as const;
 
-router.post("/food/estimate", async (req, res) => {
+// Gate: only subscribed users may call the AI estimate endpoint.
+async function requireActiveSubscription(req: Request, res: Response, next: NextFunction): Promise<void> {
+  try {
+    const userId = req.appUser!.userId;
+    const [user] = await db.select().from(appUsersTable).where(eq(appUsersTable.id, userId)).limit(1);
+    if (!user) {
+      res.status(404).json({ error: "User not found" });
+      return;
+    }
+    if (user.subscriptionStatus !== "active") {
+      res.status(403).json({ error: "Active subscription required" });
+      return;
+    }
+    next();
+  } catch (err) {
+    console.error("[requireActiveSubscription]", err);
+    res.status(500).json({ error: "Internal server error" });
+  }
+}
+
+router.post("/food/estimate", requireUser, requireActiveSubscription, async (req, res) => {
+  const userId = req.appUser!.userId;
   const { description } = req.body as { description?: string };
 
   if (!description || typeof description !== "string" || !description.trim()) {
@@ -42,13 +66,27 @@ router.post("/food/estimate", async (req, res) => {
   }
 
   try {
-    const completion = await openai.chat.completions.create({
+    // Atomically claim one trial: the UPDATE only matches (and only then
+    // increments) if the user is still under the limit, so this is the limit
+    // check and the increment in a single statement — no race window between
+    // two concurrent requests both reading "4 used" and both proceeding.
+    const [claimed] = await db
+      .update(appUsersTable)
+      .set({ aiFoodEstimateCount: sql`${appUsersTable.aiFoodEstimateCount} + 1` })
+      .where(and(eq(appUsersTable.id, userId), lt(appUsersTable.aiFoodEstimateCount, TRIAL_LIMIT)))
+      .returning({ aiFoodEstimateCount: appUsersTable.aiFoodEstimateCount });
+
+    if (!claimed) {
+      res.status(403).json({ error: "AI estimate limit reached", trialsUsed: TRIAL_LIMIT, trialsRemaining: 0 });
+      return;
+    }
+
+    const trialsRemaining = TRIAL_LIMIT - claimed.aiFoodEstimateCount;
+
+    const msg = await anthropic.messages.create({
       model: MODEL,
-      max_completion_tokens: 512,
-      messages: [
-        {
-          role: "system",
-          content: `You are a meticulous registered-dietitian-grade nutrition estimator. Given a food description, estimate its nutritional content as accurately as possible.
+      max_tokens: 512,
+      system: `You are a meticulous registered-dietitian-grade nutrition estimator. Given a food description, estimate its nutritional content as accurately as possible.
 
 Reasoning approach:
 1. Identify each distinct food/ingredient mentioned.
@@ -57,35 +95,28 @@ Reasoning approach:
 4. Sum values across ingredients, accounting for cooking method (fried vs. grilled vs. boiled changes calories/fat significantly) and any mentioned add-ons (oil, butter, sauce, cheese, etc.).
 5. Rate your own "confidence" honestly: "high" only when the food and portion are unambiguous.
 
-Respond ONLY with a valid JSON object matching the provided schema — no markdown, no code fences, no text before or after.
-
 Round calories to the nearest 5 and macros (protein/carbs/fat in grams) to the nearest 1.`,
-        },
+      messages: [{ role: "user", content: description.trim() }],
+      tools: [
         {
-          role: "user",
-          content: description.trim(),
+          name: "log_food_estimate",
+          description: "Record a nutritional estimate for a described meal",
+          input_schema: FOOD_ESTIMATE_SCHEMA as unknown as Anthropic.Tool.InputSchema,
         },
       ],
-      response_format: {
-        type: "json_schema",
-        json_schema: {
-          name: "food_estimate",
-          strict: true,
-          schema: FOOD_ESTIMATE_SCHEMA,
-        },
-      },
+      tool_choice: { type: "tool", name: "log_food_estimate" },
     });
 
-    const raw = completion.choices[0]?.message?.content ?? "";
-    console.log(`[food/estimate] ${MODEL} raw="${raw.slice(0, 300)}"`);
-
-    if (!raw.trim()) {
-      console.error(`[food/estimate] Empty response from ${MODEL}. Full completion:`, JSON.stringify(completion));
-      res.status(500).json({ error: "AI returned an empty response. Please try again." });
+    const toolUse = msg.content.find(
+      (block): block is Anthropic.ToolUseBlock => block.type === "tool_use",
+    );
+    if (!toolUse) {
+      console.error(`[food/estimate] No tool_use block in ${MODEL} response:`, JSON.stringify(msg.content));
+      res.status(500).json({ error: "AI did not return a structured estimate. Please try again." });
       return;
     }
 
-    let parsed: {
+    const parsed = toolUse.input as {
       name: string;
       assumedPortion: string;
       calories: number;
@@ -96,14 +127,6 @@ Round calories to the nearest 5 and macros (protein/carbs/fat in grams) to the n
       explanation: string;
     };
 
-    try {
-      parsed = JSON.parse(raw);
-    } catch (parseErr) {
-      console.error("[food/estimate] JSON parse failed:", parseErr, "raw:", raw);
-      res.status(500).json({ error: "AI response could not be parsed. Please try again." });
-      return;
-    }
-
     res.json({
       name: String(parsed.name ?? "Food"),
       assumedPortion: String(parsed.assumedPortion ?? ""),
@@ -113,6 +136,7 @@ Round calories to the nearest 5 and macros (protein/carbs/fat in grams) to the n
       fat: Math.round(Number(parsed.fat) || 0),
       confidence: parsed.confidence === "high" || parsed.confidence === "medium" || parsed.confidence === "low" ? parsed.confidence : "medium",
       explanation: String(parsed.explanation ?? ""),
+      trialsRemaining,
     });
   } catch (err: unknown) {
     const message = err instanceof Error ? err.message : String(err);
