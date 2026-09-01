@@ -80,6 +80,24 @@ export function formatAssessment(a: typeof assessmentsTable.$inferSelect | undef
   };
 }
 
+// GET /users/me — the caller's own account state, same shape as the `user`
+// object returned by /auth/login and /auth/register. Lets the client refresh
+// state (e.g. after a Paymob webhook enrolls them) without re-authenticating.
+router.get("/users/me", requireUser, async (req, res) => {
+  try {
+    const userId = req.appUser!.userId;
+    const [user] = await db.select().from(appUsersTable).where(eq(appUsersTable.id, userId)).limit(1);
+    if (!user) {
+      res.status(404).json({ error: "User not found" });
+      return;
+    }
+    res.json(formatUser(user));
+  } catch (err) {
+    console.error("[GET /users/me]", err);
+    res.status(500).json({ error: "Internal server error" });
+  }
+});
+
 // PATCH /users/me/assessment — upsert the caller's onboarding assessment.
 // Every field is optional; only fields present in the body are written,
 // everything else is left untouched (or defaults to null on first insert).

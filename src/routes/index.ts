@@ -20,6 +20,7 @@ import foodRouter from "./food.js";
 import wellnessRouter from "./wellness.js";
 import pregnancyJourneyRouter from "./pregnancyJourney.js";
 import programsRouter from "./programs.js";
+import paymentsPaymobRouter from "./paymentsPaymob.js";
 
 const router: IRouter = Router();
 
@@ -44,6 +45,7 @@ router.use(foodRouter);
 router.use(wellnessRouter);
 router.use(pregnancyJourneyRouter);
 router.use(programsRouter);
+router.use(paymentsPaymobRouter);
 
 export default router;
   

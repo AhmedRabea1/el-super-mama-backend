@@ -100,6 +100,7 @@ router.get("/admin/users/:userId", requireAdmin, async (req, res) => {
       currentDay: user.currentDay,
       isActive: user.isActive,
       subscriptionStatus: user.subscriptionStatus,
+      aiFoodEstimateCount: user.aiFoodEstimateCount,
       createdAt: user.createdAt,
       lastLoginAt: user.lastLoginAt,
       notes: user.notes,
@@ -137,19 +138,19 @@ router.get("/admin/users/:userId", requireAdmin, async (req, res) => {
 router.put("/admin/users/:userId", requireAdmin, async (req, res) => {
   try {
     const userId = Number(req.params.userId);
-    const { name, phone, isActive, notes, stage, programId } = req.body as {
-      name?: string; phone?: string; isActive?: boolean; notes?: string; stage?: string; programId?: number;
+    const { name, phone, isActive, notes, stage, programId, aiFoodEstimateCount } = req.body as {
+      name?: string; phone?: string; isActive?: boolean; notes?: string; stage?: string; programId?: number; aiFoodEstimateCount?: number;
     };
     const [updated] = await db
       .update(appUsersTable)
-      .set({ name, phone, isActive, notes, stage, programId, updatedAt: new Date() })
+      .set({ name, phone, isActive, notes, stage, programId, aiFoodEstimateCount, updatedAt: new Date() })
       .where(eq(appUsersTable.id, userId))
       .returning();
     if (!updated) {
       res.status(404).json({ error: "User not found" });
       return;
     }
-    res.json({ id: updated.id, email: updated.email, name: updated.name, phone: updated.phone, stage: updated.stage, programId: updated.programId, currentDay: updated.currentDay, isActive: updated.isActive, subscriptionStatus: updated.subscriptionStatus, createdAt: updated.createdAt, lastLoginAt: updated.lastLoginAt, notes: updated.notes });
+    res.json({ id: updated.id, email: updated.email, name: updated.name, phone: updated.phone, stage: updated.stage, programId: updated.programId, currentDay: updated.currentDay, isActive: updated.isActive, subscriptionStatus: updated.subscriptionStatus, aiFoodEstimateCount: updated.aiFoodEstimateCount, createdAt: updated.createdAt, lastLoginAt: updated.lastLoginAt, notes: updated.notes });
   } catch (err) {
     console.error(err);
     res.status(500).json({ error: "Internal server error" });
