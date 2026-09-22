@@ -1,5 +1,4 @@
 import { Router } from "express";
-import crypto from "crypto";
 import { db } from "../db";
 import { appUsersTable, programsTable, subscriptionsTable, transactionsTable } from "../db";
 import { eq } from "drizzle-orm";
@@ -8,7 +7,7 @@ import { requireUser } from "../middlewares/auth.js";
 const router = Router();
 
 const PAYMOB_SECRET_KEY = process.env.PAYMOB_SECRET_KEY;
-const PAYMOB_HMAC_SECRET = process.env.PAYMOB_HMAC_SECRET;
+const PAYMOB_API_KEY = process.env.PAYMOB_API_KEY;
 const PAYMOB_INTEGRATION_IDS = (process.env.PAYMOB_INTEGRATION_IDS ?? "")
   .split(",")
   .map((s) => Number(s.trim()))
@@ -115,119 +114,104 @@ router.post("/payments/paymob/intention", requireUser, async (req, res) => {
   }
 });
 
-// Paymob's documented field order for the Transaction Processed Callback
-// HMAC. Concatenate each field's raw string value (in this exact order,
-// no separator), then HMAC-SHA512 with the dashboard's HMAC secret.
-const HMAC_FIELD_ORDER = [
-  "amount_cents",
-  "created_at",
-  "currency",
-  "error_occured",
-  "has_parent_transaction",
-  "id",
-  "integration_id",
-  "is_3d_secure",
-  "is_auth",
-  "is_capture",
-  "is_refunded",
-  "is_standalone_payment",
-  "is_voided",
-  "order.id",
-  "owner",
-  "pending",
-  "source_data.pan",
-  "source_data.sub_type",
-  "source_data.type",
-  "success",
-];
-
-function getPath(obj: Record<string, unknown>, path: string): unknown {
-  return path.split(".").reduce<unknown>((acc, key) => (acc as Record<string, unknown> | undefined)?.[key], obj);
-}
-
-function computePaymobHmac(obj: Record<string, unknown>, secret: string): string {
-  const concatenated = HMAC_FIELD_ORDER.map((path) => {
-    const value = getPath(obj, path);
-    return value === undefined || value === null ? "" : String(value);
-  }).join("");
-  return crypto.createHmac("sha512", secret).update(concatenated).digest("hex");
-}
-
-function safeHexCompare(a: string, b: string): boolean {
-  try {
-    const bufA = Buffer.from(a, "hex");
-    const bufB = Buffer.from(b, "hex");
-    return bufA.length === bufB.length && crypto.timingSafeEqual(bufA, bufB);
-  } catch {
-    return false;
+// Exchanges the merchant API key for a short-lived Paymob auth token. Fetched
+// fresh per webhook call rather than cached — webhook volume is low (one per
+// purchase) and tokens expire, so there's no real benefit to caching this.
+async function getPaymobAuthToken(): Promise<string> {
+  const tokenRes = await fetch("https://accept.paymob.com/api/auth/tokens", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ api_key: PAYMOB_API_KEY }),
+  });
+  const data = (await tokenRes.json()) as { token?: string; detail?: string };
+  if (!tokenRes.ok || !data.token) {
+    throw new Error(`Paymob auth token exchange failed: ${JSON.stringify(data)}`);
   }
+  return data.token;
+}
+
+interface PaymobOrder {
+  id: number;
+  merchant_order_id: string | null;
+  payment_status: string;
+  paid_amount_cents: number;
+}
+
+async function fetchPaymobOrder(orderId: number): Promise<PaymobOrder> {
+  const token = await getPaymobAuthToken();
+  const orderRes = await fetch(`https://accept.paymob.com/api/ecommerce/orders/${orderId}?format=json`, {
+    headers: { Authorization: `Bearer ${token}` },
+  });
+  const data = (await orderRes.json()) as PaymobOrder & { detail?: string };
+  if (!orderRes.ok) {
+    throw new Error(`Paymob order lookup failed for order ${orderId}: ${JSON.stringify(data)}`);
+  }
+  return data;
+}
+
+function extractOrderId(body: Record<string, unknown>): number | undefined {
+  const transaction = body.transaction as Record<string, unknown> | undefined;
+  const obj = body.obj as Record<string, unknown> | undefined;
+  const order =
+    (transaction?.order as Record<string, unknown> | undefined) ??
+    (obj?.order as Record<string, unknown> | undefined);
+  const id = order?.id;
+  return typeof id === "number" ? id : undefined;
 }
 
 // POST /payments/paymob/webhook — this IS the `notification_url` above.
-// Paymob calls this server-to-server after a transaction completes; the
-// client can't be trusted to self-report a successful purchase, so this is
-// the only place that actually marks a purchase as paid.
+// Paymob's Intention API doesn't publish the HMAC field list/algorithm for
+// this callback shape (confirmed against their own docs — HMAC is mentioned
+// as a concept but the payload structure isn't documented, and it didn't
+// match Paymob's older, documented Accept-API scheme either). Rather than
+// trust an unverifiable signature, this looks up the order directly via
+// Paymob's own API using our own credentials: an attacker sending a forged
+// webhook can only trigger a lookup that comes back showing the real status,
+// they can't make Paymob's API itself falsely report an order as paid.
 router.post("/payments/paymob/webhook", async (req, res) => {
   try {
-    if (!PAYMOB_HMAC_SECRET) {
-      console.error("[paymob/webhook] PAYMOB_HMAC_SECRET is not configured");
+    if (!PAYMOB_API_KEY) {
+      console.error("[paymob/webhook] PAYMOB_API_KEY is not configured");
       res.status(500).json({ error: "Payment provider not configured" });
       return;
     }
 
-    const body = req.body as { obj?: Record<string, unknown>; hmac?: string };
-    const obj = body.obj;
-    const receivedHmac = (req.query.hmac as string | undefined) ?? body.hmac;
-    if (!obj || !receivedHmac) {
-      console.error("[paymob/webhook] Malformed payload — missing obj or hmac:", JSON.stringify({ body, query: req.query }));
+    const body = req.body as Record<string, unknown>;
+    const orderId = extractOrderId(body);
+    if (orderId === undefined) {
+      console.error("[paymob/webhook] Could not find an order id in payload:", JSON.stringify(body));
       res.status(400).json({ error: "Malformed webhook payload" });
       return;
     }
 
-    const computedHmac = computePaymobHmac(obj, PAYMOB_HMAC_SECRET);
-    if (!safeHexCompare(computedHmac, receivedHmac)) {
-      console.error(
-        "[paymob/webhook] HMAC verification failed. received:",
-        receivedHmac,
-        "computed:",
-        computedHmac,
-        "obj:",
-        JSON.stringify(obj),
-      );
-      res.status(401).json({ error: "Invalid signature" });
-      return;
-    }
-
-    if (!obj.success || obj.pending) {
-      console.log(
-        "[paymob/webhook] Ignoring non-final transaction. success:",
-        obj.success,
-        "pending:",
-        obj.pending,
-        "obj:",
-        JSON.stringify(obj),
-      );
+    const order = await fetchPaymobOrder(orderId);
+    if (order.payment_status !== "PAID") {
+      console.log(`[paymob/webhook] Order ${orderId} not paid yet (status: ${order.payment_status}), ignoring`);
       res.json({ message: "ok" });
       return;
     }
 
-    // special_reference is echoed back on the order Paymob created for this
-    // intention. Field location per Paymob's Intention API; falls back to a
-    // couple of other plausible spots since this hasn't been confirmed
-    // against a live sandbox transaction yet — check the logged raw payload
-    // on your first real test and adjust if needed.
-    const order = obj.order as Record<string, unknown> | undefined;
-    const specialReference = (order?.merchant_order_id ?? obj.special_reference ?? order?.special_reference) as
-      | string
-      | undefined;
+    const specialReference = order.merchant_order_id ?? undefined;
     const match = specialReference?.match(/^enroll_(\d+)_(\d+)_\d+$/);
     if (!match) {
-      console.error("[paymob/webhook] Could not parse special_reference from payload:", JSON.stringify(body));
+      console.error("[paymob/webhook] Could not parse special_reference from order:", specialReference);
       res.status(400).json({ error: "Unrecognized order reference" });
       return;
     }
     const userId = Number(match[1]);
     const programId = Number(match[2]);
+
+    // Idempotency: Paymob may retry webhook delivery; don't re-enroll or
+    // double-log a transaction already processed for this order.
+    const [existing] = await db
+      .select()
+      .from(transactionsTable)
+      .where(eq(transactionsTable.originalTransactionId, String(orderId)))
+      .limit(1);
+    if (existing) {
+      res.json({ message: "ok" });
+      return;
+    }
 
     const [program] = await db.select().from(programsTable).where(eq(programsTable.id, programId)).limit(1);
     if (!program) {
@@ -249,18 +233,17 @@ router.post("/payments/paymob/webhook", async (req, res) => {
       store: "paymob",
     });
 
-    const amountCents = obj.amount_cents as number | undefined;
     await db.insert(transactionsTable).values({
       userId,
       type: "purchase",
       productId: program.slug,
-      amountUsd: amountCents !== undefined ? (amountCents / 100).toString() : undefined,
+      amountUsd: (order.paid_amount_cents / 100).toString(),
       store: "paymob",
-      originalTransactionId: obj.id !== undefined ? String(obj.id) : undefined,
+      originalTransactionId: String(orderId),
       raw: body,
     });
 
-    console.log(`[paymob/webhook] Enrolled userId=${userId} into programId=${programId} via reference=${specialReference}`);
+    console.log(`[paymob/webhook] Enrolled userId=${userId} into programId=${programId} via order=${orderId}`);
 
     res.json({ message: "ok" });
   } catch (err) {
