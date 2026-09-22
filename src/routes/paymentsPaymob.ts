@@ -179,18 +179,34 @@ router.post("/payments/paymob/webhook", async (req, res) => {
     const obj = body.obj;
     const receivedHmac = (req.query.hmac as string | undefined) ?? body.hmac;
     if (!obj || !receivedHmac) {
+      console.error("[paymob/webhook] Malformed payload — missing obj or hmac:", JSON.stringify({ body, query: req.query }));
       res.status(400).json({ error: "Malformed webhook payload" });
       return;
     }
 
     const computedHmac = computePaymobHmac(obj, PAYMOB_HMAC_SECRET);
     if (!safeHexCompare(computedHmac, receivedHmac)) {
-      console.error("[paymob/webhook] HMAC verification failed");
+      console.error(
+        "[paymob/webhook] HMAC verification failed. received:",
+        receivedHmac,
+        "computed:",
+        computedHmac,
+        "obj:",
+        JSON.stringify(obj),
+      );
       res.status(401).json({ error: "Invalid signature" });
       return;
     }
 
     if (!obj.success || obj.pending) {
+      console.log(
+        "[paymob/webhook] Ignoring non-final transaction. success:",
+        obj.success,
+        "pending:",
+        obj.pending,
+        "obj:",
+        JSON.stringify(obj),
+      );
       res.json({ message: "ok" });
       return;
     }
@@ -243,6 +259,8 @@ router.post("/payments/paymob/webhook", async (req, res) => {
       originalTransactionId: obj.id !== undefined ? String(obj.id) : undefined,
       raw: body,
     });
+
+    console.log(`[paymob/webhook] Enrolled userId=${userId} into programId=${programId} via reference=${specialReference}`);
 
     res.json({ message: "ok" });
   } catch (err) {
