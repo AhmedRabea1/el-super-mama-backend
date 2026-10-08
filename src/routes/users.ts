@@ -1,6 +1,6 @@
 import { Router, Request, Response, NextFunction } from "express";
 import { db } from "../db";
-import { appUsersTable, assessmentsTable, calorieGoalsTable, phasesTable, programsTable, subscriptionsTable } from "../db";
+import { appUsersTable, assessmentsTable, calorieGoalsTable, phasesTable, programsTable, subscriptionsTable, workoutCompletionsTable } from "../db";
 import { eq, and, sql } from "drizzle-orm";
 import { requireUser } from "../middlewares/auth.js";
 import { formatUser } from "./appAuth.js";
@@ -41,6 +41,35 @@ async function requireNutritionSubscriber(req: Request, res: Response, next: Nex
 
 function formatCalorieGoal(row: typeof calorieGoalsTable.$inferSelect) {
   return { userId: row.userId, date: row.date, goal: row.goal, loggedCalories: row.loggedCalories };
+}
+
+// Monday 00:00 UTC of the week containing `date`.
+function getMondayUTC(date: Date): Date {
+  const d = new Date(Date.UTC(date.getUTCFullYear(), date.getUTCMonth(), date.getUTCDate()));
+  const day = d.getUTCDay(); // 0 (Sun) .. 6 (Sat)
+  d.setUTCDate(d.getUTCDate() + (day === 0 ? -6 : 1 - day));
+  return d;
+}
+
+function toUTCDateString(d: Date): string {
+  return d.toISOString().slice(0, 10);
+}
+
+// Consecutive-day streak ending today. If today has no completion yet, the
+// count starts from yesterday instead, so an in-progress day doesn't read as
+// a broken streak — but a genuinely missed day still stops the count.
+function computeStreakDays(dates: Set<string>): number {
+  const today = new Date();
+  const cursor = new Date(Date.UTC(today.getUTCFullYear(), today.getUTCMonth(), today.getUTCDate()));
+  if (!dates.has(toUTCDateString(cursor))) {
+    cursor.setUTCDate(cursor.getUTCDate() - 1);
+  }
+  let streak = 0;
+  while (dates.has(toUTCDateString(cursor))) {
+    streak++;
+    cursor.setUTCDate(cursor.getUTCDate() - 1);
+  }
+  return streak;
 }
 
 export function formatAssessment(a: typeof assessmentsTable.$inferSelect | undefined) {
@@ -287,9 +316,42 @@ router.post("/users/me/enrollment/advance-day", requireUser, async (req, res) =>
       .where(eq(appUsersTable.id, userId))
       .returning();
 
+    await db.insert(workoutCompletionsTable).values({
+      userId,
+      programId: String(user.programId),
+    });
+
     res.json(formatUser(updated));
   } catch (err) {
     console.error("[POST /users/me/enrollment/advance-day]", err);
+    res.status(500).json({ error: "Internal server error" });
+  }
+});
+
+// GET /users/me/workouts/weekly-stats — workouts completed this week
+// (distinct calendar dates, UTC) and the current day-streak, derived from
+// workout_completions rows written by POST /users/me/enrollment/advance-day.
+router.get("/users/me/workouts/weekly-stats", requireUser, requireNutritionSubscriber, async (req, res) => {
+  try {
+    const userId = req.appUser!.userId;
+
+    const rows = await db
+      .select({ completedAt: workoutCompletionsTable.completedAt })
+      .from(workoutCompletionsTable)
+      .where(eq(workoutCompletionsTable.userId, userId));
+
+    const allDates = new Set(rows.map((r) => toUTCDateString(r.completedAt)));
+    const monday = getMondayUTC(new Date());
+    const thisWeekDates = new Set(
+      rows.filter((r) => r.completedAt >= monday).map((r) => toUTCDateString(r.completedAt)),
+    );
+
+    res.json({
+      workoutsThisWeek: thisWeekDates.size,
+      streakDays: computeStreakDays(allDates),
+    });
+  } catch (err) {
+    console.error("[GET /users/me/workouts/weekly-stats]", err);
     res.status(500).json({ error: "Internal server error" });
   }
 });
