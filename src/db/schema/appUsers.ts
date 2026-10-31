@@ -18,6 +18,14 @@ export const appUsersTable = pgTable("app_users", {
   isActive: boolean("is_active").notNull().default(true),
   subscriptionStatus: text("subscription_status"),
   notes: text("notes"),
+  // Column default is `true` so the `db:push` backfill leaves existing users
+  // verified — new signups explicitly override this to `false` at insert
+  // time in POST /auth/register, which is what actually gates them.
+  emailVerified: boolean("email_verified").notNull().default(true),
+  emailVerificationCode: text("email_verification_code"),
+  emailVerificationExpiresAt: timestamp("email_verification_expires_at", { withTimezone: true }),
+  emailVerificationAttempts: integer("email_verification_attempts").notNull().default(0),
+  lastVerificationSentAt: timestamp("last_verification_sent_at", { withTimezone: true }),
   lastLoginAt: timestamp("last_login_at"),
   createdAt: timestamp("created_at").notNull().defaultNow(),
   updatedAt: timestamp("updated_at").notNull().defaultNow(),
