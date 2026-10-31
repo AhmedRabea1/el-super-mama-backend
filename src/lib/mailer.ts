@@ -1,6 +1,9 @@
 import nodemailer from "nodemailer";
 
-const transporter = nodemailer.createTransport({ host: "localhost", port: 25 });
+// Talking to Postfix on the same machine over loopback — no need for TLS on
+// this hop, and the default Postfix install has no working cert for it, so
+// nodemailer's opportunistic STARTTLS attempt fails the handshake. Skip it.
+const transporter = nodemailer.createTransport({ host: "localhost", port: 25, secure: false, ignoreTLS: true });
 
 export async function sendVerificationEmail(to: string, code: string): Promise<void> {
   await transporter.sendMail({
